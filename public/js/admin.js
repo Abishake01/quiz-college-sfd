@@ -649,7 +649,7 @@
     const head = `
       <a class="back-link" href="#/p/${project.id}">← Back to ${esc(project.name)}</a>
       <div class="page-head"><h1><span class="scribble-underline">Results</span></h1>
-        ${res ? `<button class="btn small white" type="button" id="csvExport">⬇ Export CSV</button>` : ''}
+        ${res ? `<div class="row"><button class="btn small pink" type="button" id="pdfExport">📄 Scoreboard PDF</button><button class="btn small white" type="button" id="csvExport">⬇ Export CSV</button></div>` : ''}
       </div>`;
     if (!res) {
       app.innerHTML = `${head}<div class="card white empty tape"><div class="big">📊</div><h2>No test runs yet</h2><p>Start a test from the project page — results show up here live.</p><a class="btn pink" href="#/p/${project.id}">Go run a test</a></div>`;
@@ -681,23 +681,32 @@
 
       ${hardest ? `<div class="callout trap" style="margin-bottom:24px">🧠 <b>Toughest one:</b> Q${res.questions.indexOf(hardest) + 1} — only ${hardest.firstRightPct}% got it on the first click.</div>` : ''}
 
-      <h2>What people clicked <u>first</u></h2>
-      <p class="muted">The first answer each person tapped — i.e. what they <i>thought</i> was correct before any hints.</p>
+      <div class="page-head" style="margin-bottom:6px">
+        <h2 style="margin:0">What people clicked <u>first</u></h2>
+        <label class="switch" title="What players see as their final score">
+          <input type="checkbox" id="fullScoreToggle" ${project.showFullScore ? 'checked' : ''} />
+          <span class="track" aria-hidden="true"><span class="knob"></span></span>
+          <span class="switch-text"><b>Full score</b> <span class="badge ${project.showFullScore ? 'good' : ''}" id="fullScoreState">${project.showFullScore ? 'ON' : 'OFF'}</span></span>
+        </label>
+      </div>
+      <p class="muted">The first answer each person tapped — i.e. what they <i>thought</i> was correct before any hints.
+        <br><span class="small" id="fullScoreHelp">${fullScoreHelp(project.showFullScore)}</span></p>
       ${res.questions.map((q, i) => resultQuestionHtml(q, i)).join('')}
 
-      <h2 style="margin-top:34px">🏆 Scoreboard</h2>
-      <p class="muted">Score = answers right on the first click. Chips show each person’s first pick per question.</p>
+      <div class="page-head" style="margin:34px 0 8px"><h2 style="margin:0">🏆 Scoreboard</h2>${n ? '<button class="btn small pink" type="button" id="pdfExport2">📄 Export PDF</button>' : ''}</div>
+      <p class="muted">Score = answers right on the first click · Solved = got right in the end. Chips show each person’s first pick per question.</p>
       <div class="card white table-wrap">
         ${
           n
             ? `<table class="sketch-table">
-          <thead><tr><th>#</th><th>Name</th><th>Score</th><th>Wrong taps</th><th>First picks</th><th>Status</th></tr></thead>
+          <thead><tr><th>#</th><th>Name</th><th>Score</th><th>Solved</th><th>Wrong taps</th><th>First picks</th><th>Status</th></tr></thead>
           <tbody>${res.players
             .map(
               (p, i) => `<tr>
               <td>${i < 3 ? `<span class="medal">${['🥇', '🥈', '🥉'][i]}</span>` : i + 1}</td>
               <td class="name">${esc(p.name)}</td>
               <td><b>${p.score}</b>/${qCount}</td>
+              <td>${p.solved}/${qCount}</td>
               <td>${p.wrongClicks}</td>
               <td>${p.firstPicks.map((f, qi) => `<span class="chip ${f == null ? '' : f === res.questions[qi].correct ? 'ok' : 'no'}" title="Q${qi + 1}">${f == null ? '·' : LETTERS[f]}</span>`).join('')}</td>
               <td>${p.finishedAt ? '✅ done' : `✏️ ${p.answered}/${qCount}`}</td>
@@ -709,7 +718,25 @@
       </div>`;
 
     $('#runSelect').addEventListener('change', (e) => (location.hash = `#/r/${project.id}/${e.target.value}`));
+    $('#fullScoreToggle').addEventListener('change', async (e) => {
+      const on = e.target.checked;
+      try {
+        await call(`/api/admin/projects/${project.id}`, { method: 'PUT', body: { showFullScore: on } });
+        project.showFullScore = on;
+        const state = $('#fullScoreState');
+        state.textContent = on ? 'ON' : 'OFF';
+        state.classList.toggle('good', on);
+        $('#fullScoreHelp').innerHTML = fullScoreHelp(on);
+        Sound.pop();
+        toast(on ? 'Full score ON — players see e.g. 10/10 ✅' : 'Full score OFF — players see their first-try score', 'ok');
+      } catch (err) {
+        e.target.checked = !on;
+        fail(err);
+      }
+    });
     $('#csvExport')?.addEventListener('click', () => exportCsv(res));
+    const runNo = runs.length - runs.findIndex((r) => r.id === res.id);
+    ['#pdfExport', '#pdfExport2'].forEach((sel) => $(sel)?.addEventListener('click', (e) => exportPdf(res, runNo, e.currentTarget)));
     $('#stopHere')?.addEventListener('click', async () => {
       if (!confirm('Stop the test for everyone?')) return;
       try {
@@ -722,6 +749,11 @@
       }
     });
   }
+
+  const fullScoreHelp = (on) =>
+    on
+      ? '🟢 <b>Full score ON:</b> players see how many they got right in the end (e.g. 10/10), and that’s what they share.'
+      : '⚪ <b>Full score OFF:</b> players see their real first-try score (e.g. 3/10), and that’s what they share.';
 
   function resultQuestionHtml(q, i) {
     const max = Math.max(1, ...q.counts);
@@ -753,11 +785,11 @@
 
   function exportCsv(res) {
     const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const head = ['Rank', 'Name', 'Score', 'Wrong taps', 'Finished', ...res.questions.map((q, i) => `Q${i + 1} first pick`)];
+    const head = ['Rank', 'Name', 'First-try score', 'Solved', 'Wrong taps', 'Finished', ...res.questions.map((q, i) => `Q${i + 1} first pick`)];
     const lines = [head.map(cell).join(',')];
     res.players.forEach((p, i) =>
       lines.push(
-        [i + 1, p.name, p.score, p.wrongClicks, p.finishedAt ? 'yes' : 'no', ...p.firstPicks.map((f, qi) => (f == null ? '' : `${LETTERS[f]}: ${res.questions[qi].options[f]}${f === res.questions[qi].correct ? ' ✔' : ''}`))]
+        [i + 1, p.name, p.score, p.solved, p.wrongClicks, p.finishedAt ? 'yes' : 'no', ...p.firstPicks.map((f, qi) => (f == null ? '' : `${LETTERS[f]}: ${res.questions[qi].options[f]}${f === res.questions[qi].correct ? ' ✔' : ''}`))]
           .map(cell)
           .join(',')
       )
@@ -766,6 +798,123 @@
     a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\n')], { type: 'text/csv' }));
     a.download = `${res.projectName.replace(/[^\w-]+/g, '_')}-results.csv`;
     a.click();
+  }
+
+  // ---------- scoreboard PDF (sketchbook style) ----------
+  const loadScript = (src) =>
+    new Promise((resolve, reject) => {
+      if (document.querySelector(`script[src="${src}"]`)) return resolve();
+      const el = document.createElement('script');
+      el.src = src;
+      el.onload = resolve;
+      el.onerror = () => reject(new Error('Could not load the PDF tools — check your internet connection'));
+      document.head.appendChild(el);
+    });
+
+  // Notebook lines as an image: html2canvas draws background images more faithfully than gradients.
+  function paperDataUrl() {
+    const c = document.createElement('canvas');
+    c.width = 794;
+    c.height = 32;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fdfbf2';
+    ctx.fillRect(0, 0, 794, 32);
+    ctx.fillStyle = '#cfe0f1';
+    ctx.fillRect(0, 31, 794, 1);
+    ctx.fillStyle = '#f3a6a6';
+    ctx.fillRect(52, 0, 2, 32);
+    return c.toDataURL('image/png');
+  }
+
+  function pdfRowHtml(p, i, res) {
+    const qCount = res.questions.length;
+    return `<tr>
+      <td class="rank">${i < 3 ? ['🥇', '🥈', '🥉'][i] : i + 1}</td>
+      <td class="nm">${esc(p.name)}</td>
+      <td><b>${p.score}</b>/${qCount}</td>
+      <td>${p.solved}/${qCount}</td>
+      <td>${p.wrongClicks}</td>
+      <td class="picks">${p.firstPicks.map((f, qi) => `<span class="chip ${f == null ? '' : f === res.questions[qi].correct ? 'ok' : 'no'}">${f == null ? '·' : LETTERS[f]}</span>`).join('')}</td>
+      <td>${p.finishedAt ? '✅' : `✏️ ${p.answered}/${qCount}`}</td>
+    </tr>`;
+  }
+
+  async function exportPdf(res, runNo, btn) {
+    if (!res.players.length) return toast('Nobody has played this run yet', 'error');
+    const label = btn?.innerHTML;
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = 'Drawing PDF<span class="dots"></span>';
+    }
+    try {
+      await Promise.all([
+        loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'),
+        loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'),
+      ]);
+      await document.fonts.ready;
+
+      const qCount = res.questions.length;
+      const n = res.players.length;
+      const finished = res.players.filter((p) => p.finishedAt).length;
+      const avg = (res.players.reduce((s, p) => s + p.score, 0) / n).toFixed(1);
+      const avgSolved = (res.players.reduce((s, p) => s + p.solved, 0) / n).toFixed(1);
+      const chipLines = Math.max(1, Math.ceil(qCount / 12));
+      const rowH = 42 + (chipLines - 1) * 24;
+      const firstRows = Math.max(3, Math.floor(640 / rowH));
+      const moreRows = Math.max(5, Math.floor(860 / rowH));
+      const pages = [res.players.slice(0, firstRows)];
+      for (let i = firstRows; i < n; i += moreRows) pages.push(res.players.slice(i, i + moreRows));
+
+      const paper = paperDataUrl();
+      const host = document.createElement('div');
+      host.className = 'pdf-host';
+      document.body.appendChild(host);
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
+      let offset = 0;
+
+      for (let pi = 0; pi < pages.length; pi++) {
+        const rows = pages[pi];
+        host.innerHTML = `
+          <div class="pdf-page" style="background-image:url(${paper})">
+            <div class="pdf-top"><span>📒 Doodle Quiz</span><span>Run #${runNo} · ${esc(fmtDate(res.startedAt))}</span></div>
+            ${
+              pi === 0
+                ? `<h1 class="pdf-title"><span class="scribble-underline">Scoreboard</span> 🏆</h1>
+                   <div class="pdf-sub"><span class="highlight">${esc(res.projectName)}</span> · ${qCount} questions · ${res.live ? 'still live' : `ended ${esc(fmtDate(res.endedAt))}`}</div>
+                   <div class="pdf-tiles">
+                     <div class="card yellow">${n}<small>players</small></div>
+                     <div class="card green">${finished}<small>finished</small></div>
+                     <div class="card blue">${avg}<small>avg first-try</small></div>
+                     <div class="card pink">${avgSolved}<small>avg solved</small></div>
+                   </div>`
+                : `<h2 class="pdf-title small-title">Scoreboard <span class="muted">(continued)</span></h2>`
+            }
+            <div class="card pdf-table-card">
+              <table class="sketch-table pdf-table">
+                <thead><tr><th>#</th><th>Name</th><th>First try</th><th>Solved</th><th>Wrong</th><th>First picks</th><th>Done</th></tr></thead>
+                <tbody>${rows.map((p, i) => pdfRowHtml(p, offset + i, res)).join('')}</tbody>
+              </table>
+            </div>
+            <div class="pdf-foot"><span>First try = right on the first click · Solved = right in the end · <span class="chip ok">A</span> right <span class="chip no">A</span> wrong first pick</span><span>Page ${pi + 1} of ${pages.length}</span></div>
+          </div>`;
+        offset += rows.length;
+        const canvas = await html2canvas(host.firstElementChild, { scale: 2, backgroundColor: '#fdfbf2', logging: false, useCORS: true });
+        if (pi > 0) doc.addPage();
+        doc.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, 595.28, 841.89);
+      }
+      host.remove();
+      doc.save(`${res.projectName.replace(/[^\w-]+/g, '_')}-scoreboard-run${runNo}.pdf`);
+      toast('PDF downloaded 📄', 'ok');
+    } catch (err) {
+      $('.pdf-host')?.remove();
+      toast(err.message || 'Could not create the PDF', 'error');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = label;
+      }
+    }
   }
 
   // ---------- boot ----------

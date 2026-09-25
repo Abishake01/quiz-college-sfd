@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS runs (
   started_at   timestamptz NOT NULL DEFAULT now(),
   ended_at     timestamptz
 );
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS show_full_score boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS runs_project_idx ON runs(project_id, started_at DESC);
 CREATE TABLE IF NOT EXISTS players (
   id          uuid PRIMARY KEY,
@@ -102,6 +103,7 @@ function projectRow(r) {
     questions: r.questions,
     activeRunId: r.active_run_id,
     running: !!r.active_run_id,
+    showFullScore: r.show_full_score,
     createdAt: ms(r.created_at),
     updatedAt: ms(r.updated_at),
   };
@@ -131,7 +133,7 @@ function openStream(res) {
 const send = (res, event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
 function statusOf(p) {
-  return { name: p.name, code: p.code, running: !!p.active_run_id, runId: p.active_run_id || null, questionCount: p.questions.length };
+  return { name: p.name, code: p.code, running: !!p.active_run_id, runId: p.active_run_id || null, questionCount: p.questions.length, fullScore: !!p.show_full_score };
 }
 
 // Delivers an event to SSE clients connected to *this* instance.
@@ -225,7 +227,8 @@ function answerState(question, attempts) {
   const first = attempts.length ? attempts[0].option : null;
   const done = attempts.some((a) => a.is_correct) || (!question.mustBeCorrect && attempts.length > 0);
   const wrong = attempts.filter((a) => !a.is_correct).map((a) => a.option);
-  return { first, done, wrong };
+  const solved = attempts.some((a) => a.is_correct);
+  return { first, done, wrong, solved };
 }
 
 async function loadRunData(runId) {
@@ -279,16 +282,18 @@ async function computeResults(run) {
     .map((p) => {
       let answered = 0;
       let score = 0;
+      let solved = 0;
       let wrongClicks = 0;
       const firstPicks = run.questions.map((qq) => {
         const s = answerState(qq, byPlayer.get(p.id)[qq.id] || []);
         if (s.first == null) return null;
         answered++;
+        if (s.solved) solved++;
         if (s.first === qq.correct) score++;
         wrongClicks += s.wrong.length;
         return s.first;
       });
-      return { id: p.id, name: p.name, joinedAt: ms(p.joined_at), finishedAt: ms(p.finished_at), answered, score, wrongClicks, firstPicks };
+      return { id: p.id, name: p.name, joinedAt: ms(p.joined_at), finishedAt: ms(p.finished_at), answered, score, solved, wrongClicks, firstPicks };
     })
     .sort((a, b) => b.score - a.score || a.wrongClicks - b.wrongClicks || (a.finishedAt || Infinity) - (b.finishedAt || Infinity));
 
@@ -315,7 +320,7 @@ async function playerProgress(run, playerId) {
   for (const qq of run.questions) {
     if (!grouped[qq.id]) continue;
     const s = answerState(qq, grouped[qq.id]);
-    progress[qq.id] = { done: s.done, firstTryCorrect: s.first === qq.correct, wrong: s.wrong };
+    progress[qq.id] = { done: s.done, solved: s.solved, firstTryCorrect: s.first === qq.correct, wrong: s.wrong };
   }
   return progress;
 }
@@ -456,12 +461,16 @@ async function handleApi(req, res, url) {
           hint = Number.isInteger(h) && h >= 0 && h <= 10 ? h : 2;
         }
         const questions = body.questions !== undefined ? cleanQuestions(body.questions) : project.questions;
-        const { rows } = await q('UPDATE projects SET name=$2, hint_after=$3, questions=$4, updated_at=now() WHERE id=$1 RETURNING *', [
+        const fullScore = body.showFullScore !== undefined ? !!body.showFullScore : project.show_full_score;
+        const { rows } = await q('UPDATE projects SET name=$2, hint_after=$3, questions=$4, show_full_score=$5, updated_at=now() WHERE id=$1 RETURNING *', [
           project.id,
           name,
           hint,
           JSON.stringify(questions),
+          fullScore,
         ]);
+        // Players' finish screens react live to the full-score switch.
+        if (fullScore !== project.show_full_score) broadcastStatus(rows[0]);
         return json(res, 200, projectRow(rows[0]));
       }
       if (!action && method === 'DELETE') {
@@ -562,6 +571,7 @@ async function handleApi(req, res, url) {
         name: player.name,
         projectName: run.project_name,
         hintAfter: run.hint_after,
+        fullScore: !!project.show_full_score,
         questions: publicQuestions(run),
         progress: await playerProgress(run, player.id),
       });

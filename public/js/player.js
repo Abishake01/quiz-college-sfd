@@ -55,6 +55,7 @@
     } else who.classList.add('hidden');
   }
   const scoreNow = () => S.questions.filter((q) => S.progress[q.id]?.firstTryCorrect).length;
+  const solvedNow = () => S.questions.filter((q) => S.progress[q.id]?.solved).length;
 
   // ---------- mute ----------
   const muteBtn = $('#muteBtn');
@@ -218,6 +219,7 @@
     const buttons = $$('.option');
     const prog = (S.progress[q.id] ||= { done: false, wrong: [], firstTryCorrect: false });
     prog.done = res.done;
+    if (res.correct) prog.solved = true;
     if (res.firstTry !== undefined) prog.firstTryCorrect = res.firstTry;
 
     if (res.correct) {
@@ -270,27 +272,47 @@
     questionScreen();
   }
 
+  // The admin's "full score" switch decides what the big number means:
+  // on  → questions right in the end (locked ones always end right)
+  // off → the original first-try score
+  const fullScoreOn = () => !!S.status?.fullScore;
   function scoreCard(title, subtitle) {
     const total = S.questions.length;
-    const score = scoreNow();
-    const ratio = total ? score / total : 0;
+    const first = scoreNow();
+    const full = fullScoreOn();
+    const shown = full ? solvedNow() : first;
+    const ratio = total ? shown / total : 0;
     const stars = ratio >= 0.9 ? 3 : ratio >= 0.6 ? 2 : ratio > 0 ? 1 : 0;
-    const verdict = ratio >= 0.9 ? 'Absolute legend 🏆' : ratio >= 0.6 ? 'Big brain energy 🧠' : ratio >= 0.3 ? 'Not bad at all! 😎' : 'Hey, you showed up! 🫶';
+    const verdict =
+      ratio === 1
+        ? first === total
+          ? 'Flawless! Absolute legend 🏆'
+          : 'All correct — you got there! 🏆'
+        : ratio >= 0.6
+          ? 'Big brain energy 🧠'
+          : ratio >= 0.3
+            ? 'Not bad at all! 😎'
+            : 'Hey, you showed up! 🫶';
     return {
       html: `<div class="card yellow tape finish">
                <h1>${title}</h1>
-               <div class="score-circle">${score}/${total}<small>first-try stars</small></div>
+               <div class="score-circle">${shown}/${total}<small>${full ? 'answered correctly' : 'correct answers'}</small></div>
                <div class="stars">${[0, 1, 2].map((i) => `<span class="${i < stars ? '' : 'off'}" style="animation-delay:${0.3 + i * 0.2}s">⭐</span>`).join('')}</div>
                <h2>${verdict}</h2>
                <p class="muted">${subtitle}</p>
+               <button class="btn linkedin share-main" type="button" id="shareBtn"><span class="in-logo">in</span> Share on LinkedIn</button>
              </div>`,
       celebrate: ratio >= 0.6,
     };
   }
 
+  const wireShare = () => $('#shareBtn')?.addEventListener('click', () => Share.open(shareData()));
+  const shareData = () => ({ code: S.code, name: S.name, quiz: S.status?.name || 'Doodle Quiz', solved: solvedNow(), first: scoreNow(), total: S.questions.length, fullScore: fullScoreOn() });
+
   function finishScreen() {
     const { html, celebrate } = scoreCard(`You did it, ${esc(S.name)}!`, 'All pages done! Hang out here — the host will wrap things up soon<span class="dots"></span>');
     show('finish', html, () => {
+      wireShare();
       if (celebrate) {
         Sound.yay();
         FX.confetti(innerWidth / 2, innerHeight / 3, 70);
@@ -302,7 +324,10 @@
     removeActionBar();
     if (!S.playerId) return waitingScreen(true);
     const { html } = scoreCard('✋ Pencils down!', 'The host has stopped the test. Thanks for playing! If a new round starts, you’ll hop right in.');
-    show('stopped', html, () => Sound.boom());
+    show('stopped', html, () => {
+      wireShare();
+      Sound.boom();
+    });
   }
 
   // ---------- live status + joining ----------
@@ -316,6 +341,10 @@
   function onStatus(status) {
     const prev = S.status;
     S.status = status;
+    if (prev && !!prev.fullScore !== !!status.fullScore && status.runId === S.runId) {
+      if (S.screen === 'finish') finishScreen();
+      else if (S.screen === 'stopped') stoppedScreen();
+    }
     if (!S.name || S.screen === 'name' || S.screen === 'code') return;
     if (status.running && status.runId !== S.runId) return join();
     if (!status.running && S.runId && prev?.running) {

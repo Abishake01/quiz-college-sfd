@@ -125,3 +125,37 @@ table.sketch-table { width: 100%; border-collapse: separate; border-spacing: 0; 
 .file-drop { display: block; padding: 18px; text-align: center; cursor: pointer; border: 3px dashed var(--ink); border-radius: var(--wobble); background: #fff; }
 .file-drop:hover { background: var(--yellow); }
 .file-drop input { display: none; }
+
+/* ---------- scoreboard PDF page (rendered off-screen, A4 @ 96dpi) ---------- */
+.pdf-host { position: fixed; left: -10000px; top: 0; }
+.pdf-page {
+  position: relative; width: 794px; height: 1123px; overflow: hidden;
+  padding: 36px 44px 0 80px; font-size: 17px; color: var(--ink);
+  background-color: var(--paper); background-repeat: repeat;
+}
+.pdf-top { display: flex; justify-content: space-between; font-family: var(--font-marker); font-size: 15px; padding-bottom: 8px; border-bottom: 2.5px dashed var(--ink); margin-bottom: 22px; }
+.pdf-title { font-size: 44px; margin: 0 0 6px; }
+.pdf-title.small-title { font-size: 28px; margin-bottom: 18px; }
+.pdf-sub { font-size: 19px; margin-bottom: 22px; }
+.pdf-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 26px; }
+.pdf-tiles .card { padding: 10px 8px; text-align: center; font-family: var(--font-marker); font-size: 30px; line-height: 1.1; box-shadow: 4px 4px 0 var(--ink); }
+.pdf-tiles .card small { display: block; font-family: var(--font-hand); font-size: 15px; }
+.pdf-table-card { padding: 10px 16px 6px; box-shadow: 5px 5px 0 var(--ink); }
+.pdf-table { font-size: 16px; }
+.pdf-table th, .pdf-table td { padding: 7px 6px; }
+.pdf-table td.nm { white-space: normal; max-width: 150px; overflow-wrap: anywhere; }
+.pdf-table td.rank { font-size: 20px; }
+.pdf-table td.picks { white-space: normal; max-width: 300px; }
+.pdf-table .chip { width: 22px; height: 22px; font-size: 12px; }
+.pdf-foot { position: absolute; left: 80px; right: 44px; bottom: 26px; display: flex; justify-content: space-between; gap: 14px; font-size: 13px; color: var(--ink-soft); }
+.pdf-foot .chip { width: 18px; height: 18px; font-size: 10px; }
+
+/* hand-drawn on/off switch */
+.switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; padding: 6px 14px; background: #fff; border: 2.5px solid var(--ink); border-radius: var(--wobble); box-shadow: 3px 3px 0 var(--ink); }
+.switch input { position: absolute; opacity: 0; pointer-events: none; }
+.switch .track { position: relative; flex: none; width: 58px; height: 30px; background: #e9ecef; border: 3px solid var(--ink); border-radius: 20px 16px 22px 15px; transition: background .2s; }
+.switch .knob { position: absolute; top: 2px; left: 3px; width: 20px; height: 20px; background: #fff; border: 2.5px solid var(--ink); border-radius: 50% 45% 52% 48%; transition: transform .25s cubic-bezier(.2,1.4,.4,1); }
+.switch input:checked + .track { background: #8ce99a; }
+.switch input:checked + .track .knob { transform: translateX(26px) rotate(20deg); }
+.switch input:focus-visible + .track { outline: 3px dashed var(--marker); outline-offset: 3px; }
+.switch-text { white-space: nowrap; }
