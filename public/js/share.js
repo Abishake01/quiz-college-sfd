@@ -6,13 +6,19 @@ const Share = (() => {
   function hashtag(quiz) {
     const words = quiz.split(/[^A-Za-z0-9]+/).filter((w) => w && !/^(quiz|test|game|round)$/i.test(w));
     const tag = words.map((w) => w[0].toUpperCase() + w.slice(1)).join('');
-    return tag && tag.length <= 30 ? `#${tag} ` : '';
+    return tag && tag.length <= 30 ? `#${tag}` : '';
   }
 
-  function isPublicHost() {
-    const h = location.hostname;
-    return !/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h) && !h.endsWith('.local');
-  }
+  // Event details for the post and score card — edit here for future events.
+  const EVENT = {
+    name: 'Software Freedom Day 2026',
+    short: 'JEC SFD 2026',
+    college: 'Jaya Engineering College',
+    workshop: 'Open Source workshop',
+    tags: ['#SFD2026', '#SoftwareFreedomDay', '#JECSFD2026', '#JayaEngineeringCollege', '#OpenSource', '#FOSS'],
+  };
+  // Workshop hosts tagged in every shared post.
+  const CREDITS = ['Abishake T', 'Nagi Pragalathan'];
 
   function postText({ quiz, solved, first, total, code, fullScore }) {
     const scoreLine = fullScore ? `✅ ${solved}/${total} answered correctly` : `✅ ${first}/${total} correct answers`;
@@ -22,16 +28,22 @@ const Share = (() => {
         : fullScore && solved === total
           ? 'Took a few wrong turns, but I got every single one right in the end 💪'
           : 'Learned a bunch of new things along the way 📚';
-    const link = code && isPublicHost() ? `\n\nPlay it here 👉 ${location.origin}/play/${code}` : '';
-    return `🎉 Just finished the “${quiz}” quiz!
+    // Link to the exact game this player played, on whatever site it's hosted.
+    const link = code ? `\n👉 Play it here: ${location.origin}/play/${encodeURIComponent(code)}` : '';
+    const tags = [...new Set([...EVENT.tags, hashtag(quiz), '#Quiz', '#KeepLearning'].filter(Boolean))].join(' ');
+    return `🐧 Celebrating ${EVENT.name} at ${EVENT.college}! (${EVENT.short})
+
+Today I attended the ${EVENT.workshop} and just finished the “${quiz}”${/quiz/i.test(quiz) ? '' : ' quiz'} 🎉
 
 ${scoreLine}
 
 ${line}
 
+Huge thanks to ${CREDITS.map((name) => `@${name}`).join(' & ')} for the workshop and the quiz 🙌 Loved learning how open source powers the software we use every day.
+
 Think you can beat my score? 🧠✏️${link}
 
-${hashtag(quiz)}#Quiz #Learning #KeepLearning`;
+${tags}`;
   }
 
   // ---------- canvas helpers ----------
@@ -170,6 +182,9 @@ ${hashtag(quiz)}#Quiz #Learning #KeepLearning`;
     ctx.fillStyle = INK;
     ctx.font = `30px ${MARKER}`;
     ctx.fillText('✏️ Doodle Quiz', W - 36, H - 24);
+    ctx.textAlign = 'left';
+    ctx.font = `24px ${HAND}`;
+    ctx.fillText(`🐧 ${EVENT.short} · ${EVENT.workshop} · ${EVENT.college}`, 96, H - 26);
     return c;
   }
 
@@ -236,8 +251,9 @@ ${hashtag(quiz)}#Quiz #Learning #KeepLearning`;
             const key = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ Cmd + V' : 'Ctrl + V';
             const steps = $('#liSteps', el);
             steps.innerHTML = copied
-              ? `<b>Almost there! 🖼</b> Your post text is filled in on LinkedIn. Click inside the post and press <span class="kbd">${key}</span> to paste your score card image, then hit <b>Post</b>.`
-              : `<b>Almost there! 🖼</b> Your post text is filled in on LinkedIn. We saved <b>my-quiz-score.png</b> to your downloads — click the 🖼 photo button in the post to add it, then hit <b>Post</b>.`;
+              ? `<b>Almost there! 🖼</b> Your post text is filled in on LinkedIn. Click inside the post and press <span class="kbd">${key}</span> to paste your score card image.`
+              : `<b>Almost there! 🖼</b> Your post text is filled in on LinkedIn. We saved <b>my-quiz-score.png</b> to your downloads — click the 🖼 photo button in the post to add it.`;
+            steps.innerHTML += `<br>🏷 <b>Tag the quiz makers:</b> in the post, delete ${CREDITS.map((name) => `<b>@${esc(name)}</b>`).join(' and ')}, type <b>@</b> + their name again and pick them from LinkedIn’s list. Then hit <b>Post</b>!`;
             steps.classList.remove('hidden');
             steps.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           });
