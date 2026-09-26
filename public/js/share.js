@@ -20,7 +20,7 @@ const Share = (() => {
   // Workshop hosts tagged in every shared post.
   const CREDITS = ['Abishake T', 'Nagi Pragalathan'];
 
-  function postText({ quiz, solved, first, total, code, fullScore }) {
+  function postText({ quiz, solved, first, total, code, fullScore, shareUrl }) {
     const scoreLine = fullScore ? `✅ ${solved}/${total} answered correctly` : `✅ ${first}/${total} correct answers`;
     const line =
       first === total
@@ -28,8 +28,9 @@ const Share = (() => {
         : fullScore && solved === total
           ? 'Took a few wrong turns, but I got every single one right in the end 💪'
           : 'Learned a bunch of new things along the way 📚';
-    // Link to the exact game this player played, on whatever site it's hosted.
-    const link = code ? `\n👉 Play it here: ${location.origin}/play/${encodeURIComponent(code)}` : '';
+    // Link to the exact game this player played (with their share id, so LinkedIn previews their score card).
+    const gameUrl = shareUrl || (code ? `${location.origin}/play/${encodeURIComponent(code)}` : '');
+    const link = gameUrl ? `\n👉 Play it here: ${gameUrl}` : '';
     const tags = [...new Set([...EVENT.tags, hashtag(quiz), '#Quiz', '#KeepLearning'].filter(Boolean))].join(' ');
     return `🐧 Celebrating ${EVENT.name} at ${EVENT.college}! (${EVENT.short})
 
@@ -218,15 +219,37 @@ ${tags}`;
     return copyTextSync(str);
   }
 
-  const linkedInUrl = (text) => `https://www.linkedin.com/feed/?shareActive=true&text=${encodeURIComponent(text)}`;
+  const feedUrl = (text) => `https://www.linkedin.com/feed/?shareActive=true&text=${encodeURIComponent(text)}`;
+  // LinkedIn's official share link: opens a new post (never a DM) with the page's Open Graph preview.
+  const offsiteUrl = (link) => `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(link)}`;
   const tagTip = () => `🏷 <b>Tag the quiz makers:</b> type <b>@</b> and pick ${CREDITS.map((name) => `<b>${esc(name)}</b>`).join(' and ')} from LinkedIn’s list (typed @names don’t become tags on their own).`;
 
+  // Saves the card on the server so the shared link gets it as its og:image preview.
+  async function uploadCard(canvas, data) {
+    if (!canvas || !data.runId || !data.playerId) return null;
+    try {
+      const { id } = await api('/api/play/share-card', {
+        method: 'POST',
+        body: {
+          runId: data.runId,
+          playerId: data.playerId,
+          image: canvas.toDataURL('image/jpeg', 0.9),
+          description: `${EVENT.short} · ${EVENT.workshop} at ${EVENT.college}. Think you can beat it? Tap to play the quiz!`,
+        },
+      });
+      return `${location.origin}/play/${encodeURIComponent(data.code)}?s=${id}`;
+    } catch {
+      return null;
+    }
+  }
+
   async function open(data) {
-    const text = postText(data);
     let canvas = null;
     try {
       canvas = await drawCard(data);
     } catch {}
+    const shareUrl = await uploadCard(canvas, data);
+    const text = postText({ ...data, shareUrl });
     const blob = canvas ? await new Promise((r) => canvas.toBlob(r, 'image/png')) : null;
     const file = blob ? new File([blob], 'my-quiz-score.png', { type: 'image/png' }) : null;
     // Web Share with files only exists on https pages.
@@ -239,24 +262,18 @@ ${tags}`;
          <button class="btn white" type="button" id="copyText">📋 Copy text</button>
          ${blob ? '<button class="btn white" type="button" id="dlImg">⬇ Download image</button>' : ''}
        </div>
-       <div class="card green hidden li-steps" id="liSteps"></div>
-       <p class="small muted" style="margin:12px 0 0">💡 <b>Post on LinkedIn</b> copies your score card image — just paste it into the post.</p>`;
+       <div class="card green hidden li-steps" id="liSteps"></div>`;
 
     const mobileActions = `
+       <button class="btn big linkedin block" type="button" id="mPost"><span class="in-logo">in</span> Post on LinkedIn</button>
+       <p class="small muted" style="margin:8px 0 0">Opens a new LinkedIn post${shareUrl ? ' with your score card preview' : ''}. Your text is copied — in the post, long-press → <b>Paste</b>.</p>
+       <div class="card green hidden li-steps" id="mAfter"></div>
+       <div class="or-line"><span>other ways to share</span></div>
        ${
          canNativeShare
-           ? `<div class="card yellow pick-tip">
-                <b>⚠️ In the share menu, pick the right LinkedIn:</b>
-                <div class="pick-row">
-                  <span class="pick good"><span class="in-logo">in</span> LinkedIn <small>(Share in a post)</small> ✅</span>
-                  <span class="pick bad"><span class="in-logo">in</span> LinkedIn <small>Private message</small> ❌</span>
-                </div>
-                <span class="small">Don’t see the post one? <b>Swipe the app row left</b> or tap <b>More</b> at the end.</span>
-              </div>
-              <button class="btn big linkedin block" type="button" id="nativeShare"><span class="in-logo">in</span> Share to LinkedIn</button>
-              <div class="card green hidden li-steps" id="mAfter"></div>
-              <div class="or-line"><span>or do it in 3 quick steps</span></div>`
-           : '<p style="margin:0 0 8px"><b>Post it in 3 quick steps 👇</b></p>'
+           ? `<button class="btn blue block" type="button" id="nativeShare">📱 Share the image…</button>
+              <p class="small muted" style="margin:6px 0 12px">In the menu pick <b>LinkedIn (Share in a post)</b> — not “Private message”. Swipe the app row or tap <b>More</b> if you don’t see it.</p>`
+           : ''
        }
        <ol class="m-steps">
          <li><button class="btn white block" type="button" id="mCopy">📋 Copy post text</button></li>
@@ -266,10 +283,9 @@ ${tags}`;
                 <span class="small muted">Or long-press the picture above → <b>Save to Photos</b></span></li>`
              : ''
          }
-         <li><button class="btn linkedin block" type="button" id="mOpen"><span class="in-logo">in</span> Open LinkedIn</button>
+         <li><button class="btn white block" type="button" id="mOpen"><span class="in-logo" style="background:#0a66c2;color:#fff">in</span> Open LinkedIn</button>
              <span class="small muted">Tap <b>Start a post</b> → long-press → <b>Paste</b> → tap 🖼 and pick your score card</span></li>
-       </ol>
-       <p class="small" style="margin:10px 0 0">${tagTip()}</p>`;
+       </ol>`;
 
     modal(
       `<h2>Share your score 🎉</h2>
@@ -296,22 +312,31 @@ ${tags}`;
             a.click();
             a.remove();
           };
-          const openLinkedIn = () => {
-            const win = window.open(linkedInUrl(current()), '_blank');
+          const go = (url) => {
+            const win = window.open(url, '_blank');
             if (win) win.opener = null;
-            else location.href = linkedInUrl(current());
+            else location.href = url;
+          };
+          const showSteps = (box, html) => {
+            box.innerHTML = html;
+            box.classList.remove('hidden');
+            box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           };
 
           // ----- phones -----
+          $('#mPost', el)?.addEventListener('click', () => {
+            copyTextSync(current()); // synchronous: must happen inside the tap
+            go(shareUrl ? offsiteUrl(shareUrl) : feedUrl(current()));
+            showSteps(
+              $('#mAfter', el),
+              `<b>In the LinkedIn post:</b> long-press the text area → <b>Paste</b> to add your message${shareUrl ? ' (your score card preview is already attached)' : ''}.<br>${tagTip()} Then tap <b>Post</b>!`
+            );
+          });
           $('#nativeShare', el)?.addEventListener('click', async () => {
             copyText(current());
             try {
               await navigator.share({ files: [file], text: current(), title: 'My quiz score' });
             } catch {}
-            // LinkedIn's post composer sometimes keeps only the image — the text is on the clipboard.
-            const after = $('#mAfter', el);
-            after.innerHTML = `<b>In the LinkedIn post:</b> if the text is missing, long-press the empty post → <b>Paste</b>.<br>${tagTip()}<br>Opened a private message by mistake? Go back and tap <b>Share to LinkedIn</b> again, then pick <b>LinkedIn (Share in a post)</b>.`;
-            after.classList.remove('hidden');
           });
           $('#mCopy', el)?.addEventListener('click', async (e) => {
             const btn = e.currentTarget;
@@ -326,33 +351,19 @@ ${tags}`;
             markDone(e.currentTarget, 'Score card saved');
           });
           $('#mOpen', el)?.addEventListener('click', () => {
-            copyText(current()); // copy again in case step 1 was skipped
-            openLinkedIn();
+            copyTextSync(current());
+            go(feedUrl(current()));
           });
 
           // ----- desktop -----
-          const copyImage = async () => {
-            try {
-              await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-              return true;
-            } catch {
-              return false;
-            }
-          };
-          $('#postLi', el)?.addEventListener('click', async () => {
-            // LinkedIn fills the text from ?text= but never accepts an image from a website,
-            // so the card goes on the clipboard (or to downloads) for the player to paste in.
-            const copied = blob ? await copyImage() : false;
-            if (blob && !copied) download();
-            openLinkedIn();
-            const key = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ Cmd + V' : 'Ctrl + V';
-            const steps = $('#liSteps', el);
-            steps.innerHTML = copied
-              ? `<b>Almost there! 🖼</b> Your post text is filled in on LinkedIn. Click inside the post and press <span class="kbd">${key}</span> to paste your score card image.`
-              : `<b>Almost there! 🖼</b> Your post text is filled in on LinkedIn. We saved <b>my-quiz-score.png</b> to your downloads — click the 🖼 photo button in the post to add it.`;
-            steps.innerHTML += `<br>${tagTip()} Then hit <b>Post</b>!`;
-            steps.classList.remove('hidden');
-            steps.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          $('#postLi', el)?.addEventListener('click', () => {
+            // Text is pre-filled; LinkedIn builds the score-card preview from the link inside it (og:image).
+            go(feedUrl(current()));
+            copyTextSync(current());
+            showSteps(
+              $('#liSteps', el),
+              `<b>Almost there! 🎉</b> Your post is filled in on LinkedIn${shareUrl ? ' and your score card shows up as the link preview (give it a few seconds)' : ''}. Text missing? Click in the post and paste it.<br>${tagTip()} Then hit <b>Post</b>!`
+            );
           });
           $('#copyText', el)?.addEventListener('click', async () => toast((await copyText(current())) ? 'Copied! 📋' : 'Select the text and copy it', 'ok'));
           $('#dlImg', el)?.addEventListener('click', download);

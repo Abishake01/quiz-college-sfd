@@ -306,8 +306,21 @@
     };
   }
 
-  const wireShare = () => $('#shareBtn')?.addEventListener('click', () => Share.open(shareData()));
-  const shareData = () => ({ code: S.code, name: S.name, quiz: S.status?.name || 'Doodle Quiz', solved: solvedNow(), first: scoreNow(), total: S.questions.length, fullScore: fullScoreOn() });
+  const wireShare = () =>
+    $('#shareBtn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      if (btn.disabled) return;
+      const label = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = 'Getting your card ready<span class="dots"></span>';
+      try {
+        await Share.open(shareData());
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = label;
+      }
+    });
+  const shareData = () => ({ runId: S.runId, playerId: S.playerId, code: S.code, name: S.name, quiz: S.status?.name || 'Doodle Quiz', solved: solvedNow(), first: scoreNow(), total: S.questions.length, fullScore: fullScoreOn() });
 
   function finishScreen() {
     const { html, celebrate } = scoreCard(`You did it, ${esc(S.name)}!`, 'All pages done! Hang out here — the host will wrap things up soon<span class="dots"></span>');

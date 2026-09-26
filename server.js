@@ -70,6 +70,18 @@ CREATE TABLE IF NOT EXISTS attempts (
   UNIQUE (player_id, question_id, option)
 );
 CREATE INDEX IF NOT EXISTS attempts_run_idx ON attempts(run_id);
+CREATE TABLE IF NOT EXISTS share_cards (
+  id          text PRIMARY KEY,
+  run_id      uuid NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  player_id   uuid NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  code        text NOT NULL,
+  title       text NOT NULL,
+  description text NOT NULL,
+  mime        text NOT NULL,
+  image       bytea NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS share_cards_player_idx ON share_cards(player_id);
 `;
 
 const q = (text, params) => pool.query(text, params);
@@ -368,6 +380,93 @@ async function submitAnswer(body) {
   });
 }
 
+// ---------- LinkedIn share cards (Open Graph previews) ----------
+// Each share gets its own id so LinkedIn (which caches previews per URL) always shows the latest card.
+const shareId = () => Array.from(crypto.randomBytes(8), (b) => 'abcdefghjkmnpqrstuvwxyz23456789'[b % 31]).join('');
+
+async function saveShareCard(body) {
+  if (!isUuid(body.runId) || !isUuid(body.playerId)) throw new HttpError(400, 'Bad request');
+  const m = /^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/=]+)$/.exec(String(body.image || ''));
+  if (!m) throw new HttpError(400, 'Image must be a PNG or JPEG');
+  const image = Buffer.from(m[2], 'base64');
+  const png = image.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  const jpg = image.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]));
+  if (!(png || jpg) || image.length > 700 * 1024) throw new HttpError(400, 'Invalid image');
+
+  const run = await getRun(body.runId);
+  if (!run) throw new HttpError(404, 'Game not found');
+  const player = (await q('SELECT * FROM players WHERE id=$1 AND run_id=$2', [body.playerId, run.id])).rows[0];
+  if (!player) throw new HttpError(404, 'Player not found');
+  const project = await getProject(run.project_id);
+
+  // Score in the preview title is computed here, not trusted from the browser.
+  const progress = await playerProgress(run, player.id);
+  const total = run.questions.length;
+  const vals = Object.values(progress);
+  const shown = project?.show_full_score ? vals.filter((p) => p.solved).length : vals.filter((p) => p.firstTryCorrect).length;
+  const title = `${player.name} scored ${shown}/${total} in ${run.project_name} 🎉`;
+  const description = str(body.description, 300) || 'Think you can beat that score? Tap to play the quiz!';
+
+  const id = shareId();
+  await q('DELETE FROM share_cards WHERE player_id=$1', [player.id]);
+  await q('INSERT INTO share_cards (id, run_id, player_id, code, title, description, mime, image) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [
+    id,
+    run.id,
+    player.id,
+    project?.code || '',
+    title,
+    description,
+    m[1],
+    image,
+  ]);
+  return { id };
+}
+
+const attr = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function originOf(req) {
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || 'localhost').split(',')[0].trim();
+  const proto = String(req.headers['x-forwarded-proto'] || (/^(localhost|127\.|\[::1\])/.test(host) ? 'http' : 'https')).split(',')[0].trim();
+  return `${proto}://${host}`;
+}
+
+// Open Graph tags for /play/CODE (and /play/CODE?s=SHARE_ID with the player's own score card).
+async function ogTags(req, url) {
+  const code = decodeURIComponent(url.pathname.split('/')[2] || '');
+  if (!code) return '';
+  const origin = originOf(req);
+  const sid = url.searchParams.get('s');
+  const card = sid && /^[a-z0-9]{4,16}$/.test(sid) ? (await q('SELECT id, code, title, description FROM share_cards WHERE id=$1', [sid])).rows[0] : null;
+  const project = card ? null : await getProjectByCode(code);
+  if (!card && !project) return '';
+  const pageUrl = `${origin}/play/${encodeURIComponent(code)}${card ? `?s=${card.id}` : ''}`;
+  const title = card ? card.title : `${project.name} · Doodle Quiz`;
+  const description = card ? card.description : 'A sketchbook-style quiz game. Tap to play!';
+  const tags = [
+    ['og:type', 'website'],
+    ['og:site_name', 'Doodle Quiz'],
+    ['og:url', pageUrl],
+    ['og:title', title],
+    ['og:description', description],
+  ];
+  if (card) tags.push(['og:image', `${origin}/og/${card.id}`], ['og:image:width', '1200'], ['og:image:height', '627'], ['og:image:alt', title]);
+  return (
+    tags.map(([k, v]) => `<meta property="${k}" content="${attr(v)}" />`).join('\n  ') +
+    `\n  <meta name="description" content="${attr(description)}" />` +
+    `\n  <meta name="twitter:card" content="${card ? 'summary_large_image' : 'summary'}" />` +
+    `\n  <link rel="canonical" href="${attr(pageUrl)}" />`
+  );
+}
+
+async function serveShareImage(res, id) {
+  const card = /^[a-z0-9]{4,16}$/.test(id) ? (await q('SELECT mime, image FROM share_cards WHERE id=$1', [id])).rows[0] : null;
+  if (!card) {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    return res.end('Not found');
+  }
+  res.writeHead(200, { 'Content-Type': card.mime, 'Content-Length': card.image.length, 'Cache-Control': 'public, max-age=31536000, immutable' });
+  res.end(card.image);
+}
+
 // ---------- HTTP plumbing ----------
 async function readJson(req) {
   let size = 0;
@@ -532,6 +631,8 @@ async function handleApi(req, res, url) {
 
   // ----- player -----
   if (parts[0] === 'play') {
+    if (parts[1] === 'share-card' && method === 'POST') return json(res, 201, await saveShareCard(await readJson(req)));
+
     if (parts[1] === 'answer' && method === 'POST') {
       const result = await submitAnswer(await readJson(req));
       if (result.projectId) notifyAdmins(result.projectId);
@@ -614,10 +715,25 @@ function serveStatic(req, res, url) {
   });
 }
 
+// The player page, with Open Graph tags so LinkedIn shows a rich preview for shared links.
+async function servePlayPage(req, res, url) {
+  const indexHtml = await fs.promises.readFile(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
+  let tags = '';
+  try {
+    tags = await ogTags(req, url);
+  } catch (err) {
+    console.error('OG tags failed:', err.message);
+  }
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+  res.end(tags ? indexHtml.replace('</title>', `</title>\n  ${tags}`) : indexHtml);
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
-  if (!url.pathname.startsWith('/api/')) return serveStatic(req, res, url);
   try {
+    if (url.pathname.startsWith('/og/')) return await serveShareImage(res, url.pathname.slice(4));
+    if (url.pathname.startsWith('/play/')) return await servePlayPage(req, res, url);
+    if (!url.pathname.startsWith('/api/')) return serveStatic(req, res, url);
     await handleApi(req, res, url);
   } catch (err) {
     const status = err.status || 500;
