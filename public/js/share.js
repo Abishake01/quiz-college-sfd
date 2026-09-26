@@ -188,6 +188,39 @@ ${tags}`;
     return c;
   }
 
+  const isMobile = () =>
+    /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
+
+  // Works on plain http:// too (phones on the local Wi-Fi), where navigator.clipboard doesn't exist.
+  function copyTextSync(str) {
+    const ta = document.createElement('textarea');
+    ta.value = str;
+    ta.setAttribute('readonly', '');
+    Object.assign(ta.style, { position: 'fixed', top: '0', left: '0', opacity: '0' });
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, str.length);
+    let ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch {}
+    ta.remove();
+    return ok;
+  }
+  async function copyText(str) {
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(str);
+        return true;
+      } catch {}
+    }
+    return copyTextSync(str);
+  }
+
+  const linkedInUrl = (text) => `https://www.linkedin.com/feed/?shareActive=true&text=${encodeURIComponent(text)}`;
+  const tagTip = () => `🏷 <b>Tag the quiz makers:</b> type <b>@</b> and pick ${CREDITS.map((name) => `<b>${esc(name)}</b>`).join(' and ')} from LinkedIn’s list (typed @names don’t become tags on their own).`;
+
   async function open(data) {
     const text = postText(data);
     let canvas = null;
@@ -196,41 +229,96 @@ ${tags}`;
     } catch {}
     const blob = canvas ? await new Promise((r) => canvas.toBlob(r, 'image/png')) : null;
     const file = blob ? new File([blob], 'my-quiz-score.png', { type: 'image/png' }) : null;
-    const canNativeShare = !!(file && navigator.canShare?.({ files: [file] }));
+    // Web Share with files only exists on https pages.
+    const canNativeShare = !!(file && window.isSecureContext && navigator.canShare?.({ files: [file] }));
+    const mobile = isMobile();
+
+    const desktopActions = `
+       <div class="share-actions">
+         <button class="btn linkedin" type="button" id="postLi"><span class="in-logo">in</span> Post on LinkedIn</button>
+         <button class="btn white" type="button" id="copyText">📋 Copy text</button>
+         ${blob ? '<button class="btn white" type="button" id="dlImg">⬇ Download image</button>' : ''}
+       </div>
+       <div class="card green hidden li-steps" id="liSteps"></div>
+       <p class="small muted" style="margin:12px 0 0">💡 <b>Post on LinkedIn</b> copies your score card image — just paste it into the post.</p>`;
+
+    const mobileActions = `
+       ${
+         canNativeShare
+           ? `<button class="btn big linkedin block" type="button" id="nativeShare"><span class="in-logo">in</span> Share to LinkedIn</button>
+              <p class="small muted" style="margin:8px 0 0">Pick <b>LinkedIn</b> in the share menu — your score card goes with it. The post text is copied too: if it’s missing, long-press the post and tap <b>Paste</b>.</p>
+              <div class="or-line"><span>or do it in 3 quick steps</span></div>`
+           : '<p style="margin:0 0 8px"><b>Post it in 3 quick steps 👇</b></p>'
+       }
+       <ol class="m-steps">
+         <li><button class="btn white block" type="button" id="mCopy">📋 Copy post text</button></li>
+         ${
+           blob
+             ? `<li><button class="btn white block" type="button" id="mSave">⬇ Save score card</button>
+                <span class="small muted">Or long-press the picture above → <b>Save to Photos</b></span></li>`
+             : ''
+         }
+         <li><button class="btn linkedin block" type="button" id="mOpen"><span class="in-logo">in</span> Open LinkedIn</button>
+             <span class="small muted">Tap <b>Start a post</b> → long-press → <b>Paste</b> → tap 🖼 and pick your score card</span></li>
+       </ol>
+       <p class="small" style="margin:10px 0 0">${tagTip()}</p>`;
 
     modal(
       `<h2>Share your score 🎉</h2>
        ${canvas ? `<img class="share-img" alt="Your score card" src="${canvas.toDataURL('image/png')}" />` : ''}
        <label class="field" style="margin-top:14px"><span>Your LinkedIn post <span class="small muted">(edit anything you like)</span></span>
-         <textarea class="input share-text" id="shareText" rows="10">${esc(text)}</textarea>
+         <textarea class="input share-text" id="shareText" rows="${mobile ? 7 : 10}">${esc(text)}</textarea>
        </label>
-       <div class="share-actions">
-         <button class="btn linkedin" type="button" id="postLi"><span class="in-logo">in</span> Post on LinkedIn</button>
-         ${canNativeShare ? '<button class="btn blue" type="button" id="nativeShare">📱 Share image + text</button>' : ''}
-         <button class="btn white" type="button" id="copyText">📋 Copy text</button>
-         ${blob ? '<button class="btn white" type="button" id="dlImg">⬇ Download image</button>' : ''}
-       </div>
-       <div class="card green hidden li-steps" id="liSteps"></div>
-       <p class="small muted" style="margin:12px 0 0">💡 <b>Post on LinkedIn</b> copies your score card image — just paste it into the post.</p>
+       ${mobile ? mobileActions : desktopActions}
        <div class="row end" style="margin-top:10px"><button class="btn small white" type="button" data-close>Close</button></div>`,
       {
         onMount(el) {
           const current = () => $('#shareText', el).value;
-          const copyIt = async () => {
-            try {
-              await navigator.clipboard.writeText(current());
-              return true;
-            } catch {
-              $('#shareText', el).select();
-              return document.execCommand?.('copy');
-            }
+          const markDone = (btn, label) => {
+            btn.classList.add('done');
+            btn.innerHTML = `✅ ${label}`;
           };
           const download = () => {
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
             a.download = 'my-quiz-score.png';
+            a.target = '_blank';
+            a.rel = 'noopener';
+            document.body.appendChild(a);
             a.click();
+            a.remove();
           };
+          const openLinkedIn = () => {
+            const win = window.open(linkedInUrl(current()), '_blank');
+            if (win) win.opener = null;
+            else location.href = linkedInUrl(current());
+          };
+
+          // ----- phones -----
+          $('#nativeShare', el)?.addEventListener('click', async () => {
+            copyText(current());
+            try {
+              await navigator.share({ files: [file], text: current(), title: 'My quiz score' });
+            } catch {}
+          });
+          $('#mCopy', el)?.addEventListener('click', async (e) => {
+            const btn = e.currentTarget;
+            if (await copyText(current())) markDone(btn, 'Post text copied');
+            else {
+              $('#shareText', el).select();
+              toast('Long-press the text box → Select all → Copy', 'error');
+            }
+          });
+          $('#mSave', el)?.addEventListener('click', (e) => {
+            download();
+            markDone(e.currentTarget, 'Score card saved');
+          });
+          $('#mOpen', el)?.addEventListener('click', () => {
+            copyText(current()); // copy again in case step 1 was skipped
+            openLinkedIn();
+          });
+
+          // ----- desktop -----
           const copyImage = async () => {
             try {
               await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
@@ -239,31 +327,23 @@ ${tags}`;
               return false;
             }
           };
-          $('#postLi', el).addEventListener('click', async () => {
+          $('#postLi', el)?.addEventListener('click', async () => {
             // LinkedIn fills the text from ?text= but never accepts an image from a website,
             // so the card goes on the clipboard (or to downloads) for the player to paste in.
             const copied = blob ? await copyImage() : false;
             if (blob && !copied) download();
-            const url = `https://www.linkedin.com/feed/?shareActive=true&text=${encodeURIComponent(current())}`;
-            const win = window.open(url, '_blank');
-            if (win) win.opener = null;
-            else location.href = url;
+            openLinkedIn();
             const key = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ Cmd + V' : 'Ctrl + V';
             const steps = $('#liSteps', el);
             steps.innerHTML = copied
               ? `<b>Almost there! 🖼</b> Your post text is filled in on LinkedIn. Click inside the post and press <span class="kbd">${key}</span> to paste your score card image.`
               : `<b>Almost there! 🖼</b> Your post text is filled in on LinkedIn. We saved <b>my-quiz-score.png</b> to your downloads — click the 🖼 photo button in the post to add it.`;
-            steps.innerHTML += `<br>🏷 <b>Tag the quiz makers:</b> in the post, delete ${CREDITS.map((name) => `<b>@${esc(name)}</b>`).join(' and ')}, type <b>@</b> + their name again and pick them from LinkedIn’s list. Then hit <b>Post</b>!`;
+            steps.innerHTML += `<br>${tagTip()} Then hit <b>Post</b>!`;
             steps.classList.remove('hidden');
             steps.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           });
-          $('#copyText', el).addEventListener('click', async () => toast((await copyIt()) ? 'Copied! 📋' : 'Select the text and copy it', 'ok'));
+          $('#copyText', el)?.addEventListener('click', async () => toast((await copyText(current())) ? 'Copied! 📋' : 'Select the text and copy it', 'ok'));
           $('#dlImg', el)?.addEventListener('click', download);
-          $('#nativeShare', el)?.addEventListener('click', async () => {
-            try {
-              await navigator.share({ files: [file], text: current(), title: 'My quiz score' });
-            } catch {}
-          });
         },
       }
     );

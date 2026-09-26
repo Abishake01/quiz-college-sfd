@@ -241,3 +241,11 @@
 .kbd { display: inline-block; padding: 0 8px; background: #fff; border: 2px solid var(--ink); border-radius: 6px; box-shadow: 1px 2px 0 var(--ink); white-space: nowrap; }
 .li-steps { margin-top: 14px; padding: 12px 16px; font-size: 1.05em; animation: pop-in .35s ease; }
 .kbd { display: inline-block; padding: 0 8px; background: #fff; border: 2px solid var(--ink); border-radius: 6px; box-shadow: 1px 2px 0 var(--ink); white-space: nowrap; }
+/* phone share steps */
+.m-steps { margin: 6px 0 0; padding-left: 1.6em; display: grid; gap: 12px; }
+.m-steps li { padding-left: 4px; }
+.m-steps li::marker { font-family: var(--font-marker); }
+.m-steps .btn { margin-bottom: 4px; }
+.m-steps .btn.done { --bg: #c8f2c2; }
+.or-line { display: flex; align-items: center; gap: 10px; margin: 14px 0 10px; color: var(--ink-soft); font-size: .9em; }
+.or-line::before, .or-line::after { content: ''; flex: 1; border-top: 2px dashed #bbb; }
