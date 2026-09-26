@@ -249,3 +249,11 @@
 .m-steps .btn.done { --bg: #c8f2c2; }
 .or-line { display: flex; align-items: center; gap: 10px; margin: 14px 0 10px; color: var(--ink-soft); font-size: .9em; }
 .or-line::before, .or-line::after { content: ''; flex: 1; border-top: 2px dashed #bbb; }
+.pick-tip { padding: 12px 14px; margin-bottom: 12px; font-size: .95em; }
+.pick-row { display: grid; gap: 6px; margin: 8px 0; }
+.pick { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: #fff; border: 2px solid var(--ink); border-radius: var(--wobble); }
+.pick .in-logo { background: #0a66c2; color: #fff; }
+.pick small { color: var(--ink-soft); }
+.pick.good { border-color: var(--good); box-shadow: 2px 2px 0 var(--good); }
+.pick.bad { opacity: .7; text-decoration: line-through; text-decoration-color: var(--bad); }
+.btn.linkedin.big { font-family: var(--font-hand); font-size: 1.3em; }

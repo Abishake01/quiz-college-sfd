@@ -245,8 +245,16 @@ ${tags}`;
     const mobileActions = `
        ${
          canNativeShare
-           ? `<button class="btn big linkedin block" type="button" id="nativeShare"><span class="in-logo">in</span> Share to LinkedIn</button>
-              <p class="small muted" style="margin:8px 0 0">Pick <b>LinkedIn</b> in the share menu — your score card goes with it. The post text is copied too: if it’s missing, long-press the post and tap <b>Paste</b>.</p>
+           ? `<div class="card yellow pick-tip">
+                <b>⚠️ In the share menu, pick the right LinkedIn:</b>
+                <div class="pick-row">
+                  <span class="pick good"><span class="in-logo">in</span> LinkedIn <small>(Share in a post)</small> ✅</span>
+                  <span class="pick bad"><span class="in-logo">in</span> LinkedIn <small>Private message</small> ❌</span>
+                </div>
+                <span class="small">Don’t see the post one? <b>Swipe the app row left</b> or tap <b>More</b> at the end.</span>
+              </div>
+              <button class="btn big linkedin block" type="button" id="nativeShare"><span class="in-logo">in</span> Share to LinkedIn</button>
+              <div class="card green hidden li-steps" id="mAfter"></div>
               <div class="or-line"><span>or do it in 3 quick steps</span></div>`
            : '<p style="margin:0 0 8px"><b>Post it in 3 quick steps 👇</b></p>'
        }
@@ -300,6 +308,10 @@ ${tags}`;
             try {
               await navigator.share({ files: [file], text: current(), title: 'My quiz score' });
             } catch {}
+            // LinkedIn's post composer sometimes keeps only the image — the text is on the clipboard.
+            const after = $('#mAfter', el);
+            after.innerHTML = `<b>In the LinkedIn post:</b> if the text is missing, long-press the empty post → <b>Paste</b>.<br>${tagTip()}<br>Opened a private message by mistake? Go back and tap <b>Share to LinkedIn</b> again, then pick <b>LinkedIn (Share in a post)</b>.`;
+            after.classList.remove('hidden');
           });
           $('#mCopy', el)?.addEventListener('click', async (e) => {
             const btn = e.currentTarget;
